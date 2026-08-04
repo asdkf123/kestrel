@@ -183,13 +183,13 @@
 | css-color-adjust | 137 / 157 | 87.3% |
 | compositing | 144 / 167 | 86.2% |
 | cssom ★ | 2,980 / 3,437 | 86.7% |
-| css-color | 8,944 / 9,521 | 93.9% |
+| css-color ★ | 10,792 / 11,338 | 95.2% |
 | css-content | 176 / 211 | 83.4% |
 | css-size-adjust | 170 / 207 | 82.1% |
 | css-conditional | 2,143 / 2,602 | 82.4% |
 | css-flexbox | 1,125 / 1,379 | 81.6% |
 | css-nesting | 95 / 117 | 81.2% |
-| css-backgrounds ★ | 4,991 / 6,181 | 80.7% |
+| css-backgrounds ★ | 5,039 / 6,181 | 81.5% |
 | css-anchor-position ★ | 10,462 / 13,180 | 79.4% |
 | css-position | 1,078 / 1,412 | 76.3% |
 | selectors | 3,143 / 4,118 | 76.3% |
@@ -449,6 +449,11 @@
 - **애니메이션 경로의 필터 정규화**: `element.animate` 키프레임은 CSS 파서를 거치지
   않으므로(JS 문자열) 보간·합성 입력에서 계산값 형태로 정규화한다
   (grayscale(25%) → grayscale(0.25), blur() → blur(0px), calc 평가).
+- **색 보간 공간(oklab)**: §CSS Color 4 상 보간 색공간의 기본값은 **oklab** 이고, 양쪽이
+  모두 레거시 sRGB 표기(rgb/rgba/hsl/hsla/hex/named)일 때만 sRGB 에서 보간한다. 예전엔
+  항상 sRGB 라 modern 색이 섞이면 rgb() 를 냈다. 곁들여 **box-shadow 성분 순서**가
+  결과 색의 종류로 갈린다는 것을 실측했다 — 레거시 rgb() 면 색이 먼저, 모던 색 함수면
+  색이 뒤(무조건 길이 먼저로 바꾸면 통과 282 → 14 로 폭락).
 - **corner-shape 보간**(§CSS Borders 4): superellipse 파라미터를 **정규화 half-corner
   공간 [0,1]** 으로 옮겨 선형 보간한 뒤 되돌린다 — `v = 0.5^(1/2^|s|)`(s<0 이면 1-v),
   역변환은 `c = max(v,1-v)`, `k = ln(0.5)/ln(c)`, `s = log2(k)`(v<0.5 면 부호 반전).

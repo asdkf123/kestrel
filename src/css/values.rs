@@ -14231,6 +14231,41 @@ fn lin_srgb_to_oklab(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
     )
 }
 // 감마 sRGB(0..1) → Oklab.
+// 두 색을 **oklab 에서** 보간해 oklab(...) 로 직렬화한다(§CSS Color 4: 보간 색공간의
+// 기본값은 oklab 이고, 양쪽이 모두 레거시 sRGB(rgb/rgba/hsl/hsla/hex/named)일 때만
+// sRGB 에서 보간한다). 알파는 프리멀티플라이하지 않는다(oklab 은 이미 선형 지각 공간).
+pub(crate) fn interp_color_in_oklab(a: Color, b: Color, t: f32) -> String {
+    let f = |c: Color| -> (f32, f32, f32, f32) {
+        let (l, aa, bb) = srgb_to_oklab(c.r as f32 / 255.0, c.g as f32 / 255.0, c.b as f32 / 255.0);
+        (l, aa, bb, c.a as f32 / 255.0)
+    };
+    let (l1, a1, b1, al1) = f(a);
+    let (l2, a2, b2, al2) = f(b);
+    let lerp = |x: f32, y: f32| x + (y - x) * t;
+    let (l, aa, bb, al) = (lerp(l1, l2), lerp(a1, a2), lerp(b1, b2), lerp(al1, al2));
+    let n = |v: f32| crate::style::num_css((v * 100000.0).round() / 100000.0);
+    if (al - 1.0).abs() < 1e-6 {
+        format!("oklab({} {} {})", n(l), n(aa), n(bb))
+    } else {
+        format!("oklab({} {} {} / {})", n(l), n(aa), n(bb), n(al))
+    }
+}
+
+// 레거시 sRGB 표기인가(§CSS Color 4). 이 표기끼리의 보간만 sRGB 에서 한다.
+pub(crate) fn is_legacy_srgb_color(raw: &str) -> bool {
+    let t = raw.trim().to_ascii_lowercase();
+    if t.starts_with('#') {
+        return true;
+    }
+    for p in ["rgb(", "rgba(", "hsl(", "hsla("] {
+        if t.starts_with(p) {
+            return true;
+        }
+    }
+    // 이름 있는 색·transparent·currentcolor 는 함수 표기가 아니면서 레거시다.
+    !t.contains('(')
+}
+
 fn srgb_to_oklab(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
     lin_srgb_to_oklab(srgb_gamma_inv(r), srgb_gamma_inv(g), srgb_gamma_inv(b))
 }

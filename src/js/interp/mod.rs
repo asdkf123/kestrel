@@ -8956,16 +8956,29 @@ impl Interp {
                 if c.eq_ignore_ascii_case("currentcolor") { cc.to_string() } else { c.to_string() }
             };
             let color = Self::interp_css_value(&rc(&ca), &rc(&cb), t)?;
-            // 성분 순서는 **색 먼저**다(Chrome 계산값 형식). 길이를 앞에 두도록 뒤집어
-            // 봤더니 box-shadow-interpolation 통과가 282 → 14 로 폭락해 되돌렸다.
-            let mut s = color;
+            // 성분 순서: 결과 색이 **레거시 rgb()/rgba() 면 색이 먼저**, 모던 색 함수
+            // (oklab/color() 등)면 **색이 뒤**다. Chrome 계산값 형식이며 테스트가 두
+            // 형태를 모두 요구한다(무조건 길이 먼저로 바꿨더니 통과 282 → 14 로 폭락).
+            let legacy = {
+                let l = color.trim_start().to_ascii_lowercase();
+                l.starts_with("rgb(") || l.starts_with("rgba(")
+            };
             let n = if spread { 4 } else { 3 };
+            let mut lens = String::new();
             for i in 0..n {
                 let v = la[i] + (lb[i] - la[i]) * t;
                 // blur 반경(인덱스 2)은 비음수 — 외삽 시 음수는 0 으로 클램프(§CSS).
                 let v = if i == 2 { v.max(0.0) } else { v };
-                s.push_str(&format!(" {}px", crate::style::num_css(v)));
+                if i > 0 {
+                    lens.push(' ');
+                }
+                lens.push_str(&format!("{}px", crate::style::num_css(v)));
             }
+            let mut s = if legacy {
+                format!("{color} {lens}")
+            } else {
+                format!("{lens} {color}")
+            };
             if ia && spread {
                 s.push_str(" inset");
             }
@@ -10504,7 +10517,21 @@ impl Interp {
         if let (Ok(a), Ok(b)) = (f.parse::<f32>(), g.parse::<f32>()) {
             return Some(crate::style::num_css(lerp(a, b)));
         }
-        // <color> — interpret_value 로 파싱해 컴포넌트 lerp.
+        // <color> — §CSS Color 4: 보간 색공간의 기본값은 **oklab** 이고, 양쪽이 모두
+        // 레거시 sRGB 표기(rgb/rgba/hsl/hsla/hex/named)일 때만 sRGB 에서 보간한다.
+        // 예전엔 항상 sRGB 라 modern 색(oklch/lab/color())이 섞이면 rgb() 를 냈다.
+        if !(crate::css::is_legacy_srgb_color(f) && crate::css::is_legacy_srgb_color(g)) {
+            let col = |v: &str| match crate::css::interpret_value(v) {
+                Some(crate::css::Value::Color(c)) | Some(crate::css::Value::ColorFn(c, _)) => {
+                    Some(c)
+                }
+                _ => None,
+            };
+            if let (Some(a), Some(b)) = (col(f), col(g)) {
+                return Some(crate::css::interp_color_in_oklab(a, b, t));
+            }
+        }
+        // 레거시 sRGB 끼리: 알파 프리멀티플라이드 sRGB 보간.
         if let (Some(crate::css::Value::Color(a)), Some(crate::css::Value::Color(b))) =
             (crate::css::interpret_value(f), crate::css::interpret_value(g))
         {
